@@ -3,6 +3,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+from datetime import datetime, timezone
 import time
 from typing import Dict, Tuple, List
 
@@ -10,11 +11,13 @@ from typing import Dict, Tuple, List
 load_dotenv()
 
 key = os.getenv("OPENAI_API_KEY", "")
-print("OPENAI_API_KEY loaded:", ("yes" if key else "no"), "len=", len(key), "prefix=", key[:7])
-
 
 # -- OpenAI Client --
-oai = OpenAI()
+key = os.getenv("OPENAI_API_KEY", "")
+if not key:
+    raise RuntimeError("OPENAI_API_KEY missing")
+oai = OpenAI(api_key=key)
+# oai = OpenAI()
 
 # -- Slack App --
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
@@ -62,8 +65,29 @@ Your job is decision clarity, not agreement.
 # Pinned-manifest cache helpers
 # ----------------------------
 
+# Simple in-memory cache with TTL
+# TTL means we re-fetch pinned messages every N seconds
 _manifest_cache: Dict[str, Tuple[float, str]] = {}
 MANIFEST_TTL_SECONDS = 300  # 5 minutes
+
+def fetch_recent_messages(channel_id: str, limit: int = 20) -> str:
+    """
+    Minimal history fetch: grabs the most recent N messages from a channel.
+    """
+    resp = app.client.conversations_history(channel=channel_id, limit=limit)
+    msgs = resp.get("messages", []) or []
+
+    lines = []
+    for m in reversed(msgs):  # oldest -> newest
+        if m.get("bot_id") or m.get("subtype") == "bot_message":
+            continue
+        text = (m.get("text") or "").strip()
+        if not text:
+            continue
+        user = m.get("user", "unknown")
+        lines.append(f"{user}: {text}")
+
+    return "\n".join(lines) if lines else "No recent human messages found."
 
 def _fetch_pinned_messages_text(channel_id: str) -> List[str]:
     """
@@ -160,6 +184,11 @@ def handle_app_mention(event, say):
         return
 
     channel_id = event["channel"]
+
+    history = fetch_recent_messages(channel_id, limit=20)
+    say(f"DEBUG (last 20 human msgs):\n{history}")
+    return
+
     channel_name = get_channel_name(channel_id)
     role = ROLE_MAP.get(channel_name, "Unknown")
     channel_manifest = get_channel_manifest(channel_id)
@@ -172,25 +201,25 @@ def handle_app_mention(event, say):
 
 # Optional: if you want the bot to reply to any message (not just mentions),
 # uncomment this and decide how you want to scope it.
-@app.event("message")
-def handle_message_events(event, say):
-    if event.get("bot_id"):
-        return
+# @app.event("message")
+# def handle_message_events(event, say):
+#     if event.get("bot_id"):
+#         return
 
-    text = (event.get("text") or "").strip()
+#     text = (event.get("text") or "").strip()
 
-    # Only respond if Slack actually included a mention token for THIS bot
-    # if f"<@{BOT_USER_ID}>" not in text:
-    #     return
+#     # Only respond if Slack actually included a mention token for THIS bot
+#     # if f"<@{BOT_USER_ID}>" not in text:
+#     #     return
 
-    channel_id = event["channel"]
-    channel_name = get_channel_name(channel_id)
-    role = ROLE_MAP.get(channel_name, "Unknown")
-    channel_manifest = get_channel_manifest(channel_id)
+#     channel_id = event["channel"]
+#     channel_name = get_channel_name(channel_id)
+#     role = ROLE_MAP.get(channel_name, "Unknown")
+#     channel_manifest = get_channel_manifest(channel_id)
 
-    answer = run_llm(role, channel_manifest, text)
-    if answer:
-        say(answer)
+#     answer = run_llm(role, channel_manifest, text)
+#     if answer:
+#         say(answer)
 
 # --- Start the app ---
 
