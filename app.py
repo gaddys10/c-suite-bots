@@ -172,6 +172,13 @@ def run_llm(role: str, channel_manifest: str, user_text: str) -> str:
 # Handle app mentions
 @app.event("app_mention")
 def handle_app_mention(event, say):
+    print("HIT app_mention", event.get("channel"), event.get("text"))
+
+    channel_id = event["channel"]
+
+    history = fetch_recent_messages(channel_id, limit=20)
+    say(f"DEBUG (last 20 human msgs):\n{history}")
+    return
     # ignore bot messages
     if event.get("bot_id"):
         return
