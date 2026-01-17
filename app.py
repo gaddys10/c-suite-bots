@@ -135,7 +135,7 @@ def poll_github():
         try:
             last_sha = kv_get(f"gh:{repo}:sha", "")
             sha = latest_commit_sha(repo)
-            if last_sha and sha != last_sha:
+            if sha and sha != last_sha:
                 event_text = f"{repo} new commit {sha[:7]}"
 
                 write_signal(
@@ -180,7 +180,7 @@ def poll_github():
             pr = latest_open_pr(repo)
             fp = f"{pr['number']}|{pr['updated_at']}" if pr else ""
 
-            if last_pr and fp and fp != last_pr:
+            if fp and fp != last_pr:
                 event_text = f"{repo} PR #{pr['number']} updated — {pr['title']}"
 
                 write_signal(
@@ -361,11 +361,6 @@ def record_event(body: dict):
 # Simple in-memory cache with TTL (refetching pins every N seconds).
 _manifest_cache: Dict[str, Tuple[float, str]] = {}
 MANIFEST_TTL_SECONDS = 300  # 5 minutes
-
-
-
-CHANNEL_ID_BY_NAME = build_channel_id_map()
-GENERAL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("general")
 
 def fetch_recent_messages(channel_id: str, limit: int = 20) -> str:
     """
