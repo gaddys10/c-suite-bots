@@ -1,3 +1,4 @@
+from pydoc import text
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from openai import OpenAI
@@ -45,6 +46,9 @@ ROLE_MAP = {
     "council": "Council",
     "bot-sandbox": "Chief Risk Officer",  # for testing purposes
 }
+
+CHANNEL_ID_BY_NAME = build_channel_id_map()
+GENERAL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("general")
 
 # --- GitHub repos to track ---
 TRACKED_REPOS = [
@@ -200,8 +204,8 @@ def poll_github():
 
                     if resp and resp.strip():
                         app.client.chat_postMessage(
-                            channel="general",
-                            text=f"*{role}*\n{resp.strip()}"
+                            channel=channel_id,
+                            text=resp.strip()
                         )
 
             kv_set(f"gh:{repo}:pr", fp)
@@ -358,6 +362,7 @@ def build_channel_id_map():
     return {c["name"]: c["id"] for c in chans}
 
 CHANNEL_ID_BY_NAME = build_channel_id_map()
+GENERAL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("general")
 
 def fetch_recent_messages(channel_id: str, limit: int = 20) -> str:
     """
@@ -490,12 +495,45 @@ def handle_message_events(body, event, say, logger):
     if event.get("bot_id") or event.get("subtype"):
         return
     
-    # CASE 1: message posted in #general
-    if channel_id == GENERAL_CHANNEL_ID:
+    # CASE 1: message posted in #general (bulletin board)
+    if GENERAL_CHANNEL_ID and channel_id == GENERAL_CHANNEL_ID:
         logger.info("[general] bulletin received")
 
-        for role in ROLES:
-            maybe_respond(role, text)
+        bulletin = text
+
+        # Optional: store bulletin as memory signal (keeps it in your DB)
+        write_signal(
+            channel="general",
+            role="Founder",
+            kind="bulletin",
+            text=bulletin
+        )
+
+        # Each role reads bulletin and responds (ONLY) in their own role channel
+        for ch_name, role in ROLE_MAP.items():
+            if role == "Council":
+                continue
+
+            role_channel_id = CHANNEL_ID_BY_NAME.get(ch_name)
+            if not role_channel_id:
+                continue
+
+            manifest = get_channel_manifest(role_channel_id)
+
+            resp = run_llm(
+                role,
+                manifest,
+                "A new bulletin was posted in #general:\n\n"
+                f"{bulletin}\n\n"
+                "If you believe Syrus should hear from you about this, reply briefly. "
+                "If not, respond with nothing."
+            )
+
+            if resp and resp.strip():
+                app.client.chat_postMessage(
+                    channel=role_channel_id,
+                    text=resp.strip()
+                )
 
         return
 
