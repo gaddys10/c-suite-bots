@@ -190,12 +190,6 @@ def handle_app_mention(event, say):
     if f"<@{bot_user_id}>" not in text:
         return
 
-    channel_id = event["channel"]
-
-    history = fetch_recent_messages(channel_id, limit=20)
-    say(f"DEBUG (last 20 human msgs):\n{history}")
-    return
-
     channel_name = get_channel_name(channel_id)
     role = ROLE_MAP.get(channel_name, "Unknown")
     channel_manifest = get_channel_manifest(channel_id)
@@ -208,25 +202,25 @@ def handle_app_mention(event, say):
 
 # Optional: if you want the bot to reply to any message (not just mentions),
 # uncomment this and decide how you want to scope it.
-# @app.event("message")
-# def handle_message_events(event, say):
-#     if event.get("bot_id"):
-#         return
+@app.event("message")
+def handle_message_events(event, say):
+    if event.get("bot_id"):
+        return
 
-#     text = (event.get("text") or "").strip()
+    text = (event.get("text") or "").strip()
 
-#     # Only respond if Slack actually included a mention token for THIS bot
-#     # if f"<@{BOT_USER_ID}>" not in text:
-#     #     return
+    # Only respond if Slack actually included a mention token for THIS bot
+    # if f"<@{BOT_USER_ID}>" not in text:
+    #     return
 
-#     channel_id = event["channel"]
-#     channel_name = get_channel_name(channel_id)
-#     role = ROLE_MAP.get(channel_name, "Unknown")
-#     channel_manifest = get_channel_manifest(channel_id)
+    channel_id = event["channel"]
+    channel_name = get_channel_name(channel_id)
+    role = ROLE_MAP.get(channel_name, "Unknown")
+    channel_manifest = get_channel_manifest(channel_id)
 
-#     answer = run_llm(role, channel_manifest, text)
-#     if answer:
-#         say(answer)
+    answer = run_llm(role, channel_manifest, text)
+    if answer:
+        say(answer)
 
 # --- Start the app ---
 
