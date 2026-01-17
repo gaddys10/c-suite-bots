@@ -361,6 +361,7 @@ def build_channel_id_map():
     chans = resp.get("channels", []) or []
     return {c["name"]: c["id"] for c in chans}
 
+
 CHANNEL_ID_BY_NAME = build_channel_id_map()
 GENERAL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("general")
 
