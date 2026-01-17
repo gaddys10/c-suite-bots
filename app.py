@@ -92,9 +92,9 @@ Your job is decision clarity, not agreement.
 """.strip()
 
 PROJECT_KEYWORDS = {
-    "BoxWeb": ["boxweb", "fighter", "rank", "compare", "p4p", "division"],
+    "BoxWeb": ["boxweb", "boxing", "fighter", "rank", "compare", "p4p", "division"],
     "Bookity": ["bookity", "booking", "appointment", "service", "business"],
-    "Vovis": ["vovis", "resume", "job", "career", "ats"],
+    "Vovis": ["vovis", "resume", "job", "career", "ats",],
     "Consonant": ["consonant", "consonant software"],
     "Gaddico": ["gaddico", "gaddy", "locklear", "gaddy locklear", "holding", "c-suite", "c suite", "council"],
 }
