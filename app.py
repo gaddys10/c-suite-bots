@@ -120,7 +120,9 @@ def nudge_roles_about_github(event_text: str):
     )
 
 def poll_github():
+    
     for repo in TRACKED_REPOS:
+        print(f"[poll_github] tick {time.time()} for repo {repo}", flush=True)
         try:
             last_sha = kv_get(f"gh:{repo}:sha", "")
             sha = latest_commit_sha(repo)
