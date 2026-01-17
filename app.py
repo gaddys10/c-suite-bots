@@ -29,7 +29,6 @@ key = os.getenv("OPENAI_API_KEY", "")
 if not key:
     raise RuntimeError("OPENAI_API_KEY missing")
 oai = OpenAI(api_key=key)
-# oai = OpenAI()
 
 # -- Slack App --
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
@@ -119,7 +118,6 @@ def nudge_roles_about_github(event_text: str):
         channel="council",
         text="*GitHub Role Nudges*\n\n" + "\n\n".join(parts)
     )
-
 
 def poll_github():
     for repo in TRACKED_REPOS:
@@ -215,7 +213,6 @@ def poll_github():
             )
             continue
 
-
 def run_daily_brief():
     last_ts = get_last_brief_ts()
     rows = get_signals_since(last_ts)
@@ -301,7 +298,6 @@ def build_signal_summary(since_ts: float) -> str:
         lines.append(f"- topics={topics}; flags={','.join(flags) if flags else 'none'}; size={s['len']}")
     return "\n".join(lines)
 
-
 def extract_signals(text: str) -> Dict[str, object]:
     t = (text or "").lower()
     topics = []
@@ -355,7 +351,6 @@ def build_channel_id_map():
     return {c["name"]: c["id"] for c in chans}
 
 CHANNEL_ID_BY_NAME = build_channel_id_map()
-
 
 def fetch_recent_messages(channel_id: str, limit: int = 20) -> str:
     """
@@ -411,7 +406,7 @@ def get_channel_manifest(channel_id: str) -> str:
         else:
             manifest = "\n\n---\n\n".join(pinned_texts)
 
-        # Safety cap to prevent prompt blowups if someone pins a book.
+        # Safety cap to prevent prompt blowups if someone pins a book
         MAX_CHARS = 12000
         if len(manifest) > MAX_CHARS:
             manifest = manifest[:MAX_CHARS] + "\n\n[TRUNCATED: manifest too long]"
@@ -441,7 +436,6 @@ def build_system_prompt(role: str, channel_manifest: str) -> str:
         f"- Do not invent constraints not present in the manifest.\n"
         f"- Keep answers concise, direct, and role-consistent.\n"
     )
-
 
 def run_llm(role: str, channel_manifest: str, user_text: str) -> str:
     sys = build_system_prompt(role, channel_manifest)
