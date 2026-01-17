@@ -92,11 +92,11 @@ Your job is decision clarity, not agreement.
 """.strip()
 
 PROJECT_KEYWORDS = {
-    "BoxWeb": ["boxweb", "fighter", "rank", "compare", "p4p", "division"],
+    "BoxWeb": ["boxweb", "boxing", "fighter", "rank", "compare", "p4p", "division"],
     "Bookity": ["bookity", "booking", "appointment", "service", "business"],
-    "Vovis": ["vovis", "resume", "job", "career", "ats"],
+    "Vovis": ["vovis", "resume", "job", "career", "ats",],
     "Consonant": ["consonant", "consonant software"],
-    "Gaddico": ["gaddico", "holding", "c-suite", "c suite", "council"],
+    "Gaddico": ["gaddico", "gaddy", "locklear", "gaddy locklear", "Ventures", "holding", "holdings", "c-suite", "c suite", "council", "councils"],
 }
 
 AWARENESS_RULE = (
@@ -169,12 +169,6 @@ def poll_github():
                             channel=channel_id,
                             text=resp.strip()
                         )
-
-                # optional: keep the one-line generic update (or delete it)
-                # app.client.chat_postMessage(
-                #     channel="council-briefs",
-                #     text=f"*GitHub Update* — {repo} new commit `{sha[:7]}`"
-                # )
 
             last_pr = kv_get(f"gh:{repo}:pr", "")
             pr = latest_open_pr(repo)
