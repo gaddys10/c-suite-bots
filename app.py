@@ -96,7 +96,7 @@ PROJECT_KEYWORDS = {
     "Bookity": ["bookity", "booking", "appointment", "service", "business"],
     "Vovis": ["vovis", "resume", "job", "career", "ats",],
     "Consonant": ["consonant", "consonant software"],
-    "Gaddico": ["gaddico", "gaddy", "locklear", "gaddy locklear", "holding", "holdings", "c-suite", "c suite", "council", "councils"],
+    "Gaddico": ["gaddico", "gaddy", "locklear", "gaddy locklear", "Ventures", "holding", "holdings", "c-suite", "c suite", "council", "councils"],
 }
 
 AWARENESS_RULE = (
