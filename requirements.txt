@@ -1,4 +1,4 @@
 slack-bolt
 openai
 python-dotenv
-apscheduler===3.10.4
+apscheduler==3.10.4
