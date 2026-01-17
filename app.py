@@ -157,7 +157,7 @@ def poll_github():
                     if resp and resp.strip():
                         app.client.chat_postMessage(
                             channel=channel_id,
-                            text=f"*{role}*\n{resp.strip()}"
+                            text=resp.strip()
                         )
 
                 # optional: keep the one-line generic update (or delete it)
@@ -329,6 +329,7 @@ def record_event(body: dict):
     # ignore bot messages + edits/etc
     if event.get("bot_id") or event.get("subtype"):
         return
+    
 
     text = (event.get("text") or "").strip()
     if not text:
@@ -479,7 +480,7 @@ def handle_app_mention(body, event, say, logger):
 # So the bot replies to any message (not just mentions),
 @app.event("message")
 def handle_message_events(body, event, say, logger):
-
+    event = body.get("event", {}    )
     channel_id = event.get("channel")
     text = (event.get("text") or "").strip()
     if not channel_id or not text:
@@ -487,6 +488,15 @@ def handle_message_events(body, event, say, logger):
 
     # Ignore bot messages + message subtypes (edits, joins, etc.)
     if event.get("bot_id") or event.get("subtype"):
+        return
+    
+    # CASE 1: message posted in #general
+    if channel_id == GENERAL_CHANNEL_ID:
+        logger.info("[general] bulletin received")
+
+        for role in ROLES:
+            maybe_respond(role, text)
+
         return
 
     channel_name = get_channel_name(channel_id)
