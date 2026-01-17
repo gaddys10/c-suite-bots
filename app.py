@@ -157,7 +157,7 @@ def poll_github():
                     if resp and resp.strip():
                         app.client.chat_postMessage(
                             channel=channel_id,
-                            text=f"*{role}*\n{resp.strip()}"
+                            text=resp.strip()
                         )
 
                 # optional: keep the one-line generic update (or delete it)
