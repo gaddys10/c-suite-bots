@@ -5,8 +5,14 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 import time
+import sys
 from typing import Dict, Tuple, List
 from collections import deque
+from apscheduler.schedulers.blocking import BlockingScheduler
+from memory import init_db, kv_get, kv_set, write_signal, get_signals_since, get_last_brief_ts, set_last_brief_ts
+from github_read import latest_commit_sha, latest_open_pr
+
+init_db()
 
 # ---- Cross-channel awareness buffer (in-memory) ----
 # NOTE: resets on restart/deploy. We'll persist later (Redis/Postgres).
@@ -41,6 +47,15 @@ ROLE_MAP = {
     "council": "Council",
     "bot-sandbox": "Chief Risk Officer",  # for testing purposes
 }
+
+TRACKED_REPOS = [
+    "gaddys10/boxweb-site",
+    "gaddys10/appointment-booker",
+    "gaddys10/jobari-engine",
+    "gaddys10/boxing-gym-finder",
+    "gaddys10/c-suite-bots",
+    "gaddys10/home-site",
+]
 
 #--- System prompt template for each role ---
 SYSTEM_PROMPT = """
@@ -80,6 +95,193 @@ AWARENESS_RULE = (
     "Do not quote or reveal message text from other channels, do not identify channel names, "
     "and do not identify authors. Only discuss abstract implications/signals and next actions."
 )
+
+def nudge_roles_about_github(event_text: str):
+    parts = []
+    for ch_name, r in ROLE_MAP.items():
+        if r == "Council":
+            continue
+        channel_id = CHANNEL_ID_BY_NAME.get(ch_name)
+        if not channel_id:
+            continue
+        manifest = get_channel_manifest(channel_id)
+
+        prompt = (
+            f"New GitHub event:\n{event_text}\n\n"
+            f"As {r}, respond with: (1) implication, (2) next action for Syrus, (3) risk.\n"
+            f"Be short."
+        )
+        resp = run_llm(r, manifest, prompt)
+        if resp:
+            parts.append(f"*{r}*\n{resp}")
+
+    app.client.chat_postMessage(
+        channel="council",
+        text="*GitHub Role Nudges*\n\n" + "\n\n".join(parts)
+    )
+
+
+def poll_github():
+    for repo in TRACKED_REPOS:
+        try:
+            last_sha = kv_get(f"gh:{repo}:sha", "")
+            sha = latest_commit_sha(repo)
+            if last_sha and sha != last_sha:
+                event_text = f"{repo} new commit {sha[:7]}"
+
+                write_signal(
+                    channel="system",
+                    role="Council",
+                    kind="github_event",
+                    text=event_text
+                )
+
+                for ch_name, role in ROLE_MAP.items():
+                    if role == "Council":
+                        continue
+
+                    channel_id = CHANNEL_ID_BY_NAME.get(ch_name)
+                    if not channel_id:
+                        continue
+
+                    manifest = get_channel_manifest(channel_id)
+
+                    resp = run_llm(
+                        role,
+                        manifest,
+                        f"A code change just happened:\n{event_text}\n\n"
+                        "If you believe Syrus needs to know about this right now, say so briefly. "
+                        "If not, respond with nothing."
+                    )
+
+                    if resp and resp.strip():
+                        app.client.chat_postMessage(
+                            channel="general",
+                            text=f"*{role}*\n{resp.strip()}"
+                        )
+
+                # optional: keep the one-line generic update (or delete it)
+                # app.client.chat_postMessage(
+                #     channel="council-briefs",
+                #     text=f"*GitHub Update* — {repo} new commit `{sha[:7]}`"
+                # )
+
+            last_pr = kv_get(f"gh:{repo}:pr", "")
+            pr = latest_open_pr(repo)
+            fp = f"{pr['number']}|{pr['updated_at']}" if pr else ""
+
+            if last_pr and fp and fp != last_pr:
+                event_text = f"{repo} PR #{pr['number']} updated — {pr['title']}"
+
+                write_signal(
+                    channel="system",
+                    role="Council",
+                    kind="github_event",
+                    text=event_text
+                )
+
+                for ch_name, role in ROLE_MAP.items():
+                    if role == "Council":
+                        continue
+
+                    channel_id = CHANNEL_ID_BY_NAME.get(ch_name)
+                    if not channel_id:
+                        continue
+
+                    manifest = get_channel_manifest(channel_id)
+
+                    resp = run_llm(
+                        role,
+                        manifest,
+                        f"A code change just happened:\n{event_text}\n\n"
+                        "If you believe Syrus needs to know about this right now, say so briefly. "
+                        "If not, respond with nothing."
+                    )
+
+                    if resp and resp.strip():
+                        app.client.chat_postMessage(
+                            channel="general",
+                            text=f"*{role}*\n{resp.strip()}"
+                        )
+
+            kv_set(f"gh:{repo}:pr", fp)
+            kv_set(f"gh:{repo}:sha", sha)
+        except Exception as e:
+            write_signal(
+                channel="system",
+                role="Council",
+                kind="github_error",
+                text=f"{repo}: {repr(e)}"
+            )
+            continue
+
+
+def run_daily_brief():
+    last_ts = get_last_brief_ts()
+    rows = get_signals_since(last_ts)
+
+    if not rows:
+        summary_input = "No new activity since the last brief."
+    else:
+        summary_input = "\n".join(
+            f"- [{kind.upper()}] ({role}) {text}"
+            for _, _, role, kind, text in rows
+        )
+
+    briefs = []
+
+    for channel_name, role in ROLE_MAP.items():
+        if role == "Council":
+            continue  # skip council, it's an aggregator
+
+        role_channel_id = CHANNEL_ID_BY_NAME.get(channel_name)
+        if not role_channel_id:
+            continue
+        manifest = get_channel_manifest(role_channel_id)
+
+        prompt = f"""
+You are preparing a daily executive brief.
+
+Based ONLY on the activity below:
+- What matters for your role today?
+- What decisions are required?
+- What risks should be flagged?
+- What actions should Syrus consider?
+
+ACTIVITY:
+{summary_input}
+""".strip()
+
+        response = run_llm(role, manifest, prompt)
+        if response:
+            briefs.append(f"*{role}*\n{response}")
+
+    final_brief = "\n\n".join(briefs)
+
+    app.client.chat_postMessage(
+        channel="council-briefs",
+        text=f"*Daily Executive Brief*\n\n{final_brief}"
+    )
+
+    set_last_brief_ts(time.time())
+
+def run_scheduled_jobs():
+    scheduler = BlockingScheduler(timezone="UTC")
+
+    scheduler.add_job(
+        run_daily_brief,
+        trigger="cron",
+        hour=13,  # 9am ET = 13 UTC
+        minute=0,
+    )
+
+    scheduler.add_job(
+        poll_github,
+        trigger="interval",
+        minutes=5,
+    )
+
+    scheduler.start()
 
 def build_signal_summary(since_ts: float) -> str:
     items = [x for x in list(EVENT_BUFFER) if x["ts"] > since_ts]
@@ -146,6 +348,14 @@ def record_event(body: dict):
 # TTL means we re-fetch pinned messages every N seconds
 _manifest_cache: Dict[str, Tuple[float, str]] = {}
 MANIFEST_TTL_SECONDS = 300  # 5 minutes
+
+def build_channel_id_map():
+    resp = app.client.conversations_list(limit=1000)
+    chans = resp.get("channels", []) or []
+    return {c["name"]: c["id"] for c in chans}
+
+CHANNEL_ID_BY_NAME = build_channel_id_map()
+
 
 def fetch_recent_messages(channel_id: str, limit: int = 20) -> str:
     """
@@ -270,7 +480,6 @@ def handle_app_mention(body, event, say, logger):
 # uncomment this and decide how you want to scope it.
 @app.event("message")
 def handle_message_events(body, event, say, logger):
-    record_event(body)
 
     channel_id = event.get("channel")
     text = (event.get("text") or "").strip()
@@ -300,6 +509,7 @@ def handle_message_events(body, event, say, logger):
         role = ROLE_MAP.get(channel_name, "Unknown")
         channel_manifest = get_channel_manifest(channel_id)
 
+
         prompt = (
             f"{AWARENESS_RULE}\n\n"
             f"WORKSPACE SIGNALS (ABSTRACTED):\n{signals}\n\n"
@@ -316,6 +526,24 @@ def handle_message_events(body, event, say, logger):
     # Normal role response
     role = ROLE_MAP.get(channel_name, "Unknown")
     channel_manifest = get_channel_manifest(channel_id)
+
+    text = event.get("text", "")
+
+    kind = "message"
+    if text.startswith("DECISION:"):
+        kind = "decision"
+    elif text.startswith("RISK:"):
+        kind = "risk"
+    elif text.startswith("TODO:"):
+        kind = "todo"
+
+    write_signal(
+        channel=channel_name,
+        role=role,
+        kind=kind,
+        text=event.get("text", "")
+    )
+
     answer = run_llm(role, channel_manifest, text)
     if answer:
         say(answer)
@@ -323,4 +551,7 @@ def handle_message_events(body, event, say, logger):
 # --- Start the app ---
 
 if __name__ == "__main__":
-    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
+    if "--cron" in sys.argv:
+        run_scheduled_jobs()
+    else:
+        SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
