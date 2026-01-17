@@ -8,7 +8,7 @@ import time
 import sys
 from typing import Dict, Tuple, List
 from collections import deque
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from memory import init_db, kv_get, kv_set, write_signal, get_signals_since, get_last_brief_ts, set_last_brief_ts
 from github_read import latest_commit_sha, latest_open_pr
 
@@ -263,19 +263,25 @@ ACTIVITY:
     set_last_brief_ts(time.time())
 
 def run_scheduled_jobs():
-    scheduler = BlockingScheduler(timezone="UTC")
+    scheduler = BackgroundScheduler(timezone="UTC")
 
+    # poll GitHub every 5 minutes
+    scheduler.add_job(
+        poll_github,
+        trigger="interval",
+        minutes=5,
+        id="poll_github",
+        replace_existing=True,
+    )
+
+    # daily brief (optional — delete this block if you don’t want it yet)
     scheduler.add_job(
         run_daily_brief,
         trigger="cron",
         hour=13,  # 9am ET = 13 UTC
         minute=0,
-    )
-
-    scheduler.add_job(
-        poll_github,
-        trigger="interval",
-        minutes=5,
+        id="daily_brief",
+        replace_existing=True,
     )
 
     scheduler.start()
@@ -545,7 +551,5 @@ def handle_message_events(body, event, say, logger):
 # --- Start the app ---
 
 if __name__ == "__main__":
-    if "--cron" in sys.argv:
-        run_scheduled_jobs()
-    else:
-        SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
+    run_scheduled_jobs()
+    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
