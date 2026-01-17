@@ -6,11 +6,17 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 import time
 from typing import Dict, Tuple, List
+from collections import deque
 
+# ---- Cross-channel awareness buffer (in-memory) ----
+# NOTE: resets on restart/deploy. We'll persist later (Redis/Postgres).
+EVENT_BUFFER_MAX = 500
+EVENT_BUFFER = deque(maxlen=EVENT_BUFFER_MAX)
+
+# Per-role-channel "last brief" timestamp so briefs are incremental
+LAST_BRIEF_TS_BY_CHANNEL: Dict[str, float] = {}
 
 load_dotenv()
-
-key = os.getenv("OPENAI_API_KEY", "")
 
 # -- OpenAI Client --
 key = os.getenv("OPENAI_API_KEY", "")
@@ -60,6 +66,77 @@ If the channel is #council:
 
 Your job is decision clarity, not agreement.
 """.strip()
+
+PROJECT_KEYWORDS = {
+    "BoxWeb": ["boxweb", "fighter", "rank", "compare", "p4p", "division"],
+    "Bookity": ["bookity", "booking", "appointment", "service", "business"],
+    "Vovis": ["vovis", "resume", "job", "career", "ats"],
+    "Consonant": ["consonant", "consonant software"],
+    "Gaddico": ["gaddico", "holding", "c-suite", "c suite", "council"],
+}
+
+AWARENESS_RULE = (
+    "Cross-channel awareness is permitted for internal reasoning only. "
+    "Do not quote or reveal message text from other channels, do not identify channel names, "
+    "and do not identify authors. Only discuss abstract implications/signals and next actions."
+)
+
+def build_signal_summary(since_ts: float) -> str:
+    items = [x for x in list(EVENT_BUFFER) if x["ts"] > since_ts]
+    if not items:
+        return "No new workspace signals since the last brief."
+
+    # compress into a small textual blob (still no quotes, no channels, no authors)
+    lines = []
+    for x in items[-80:]:  # cap
+        s = x["signal"]
+        topics = ",".join(s["topics"]) if s["topics"] else "Unknown"
+        flags = []
+        if s["is_question"]: flags.append("question")
+        if s["mentions_blocker"]: flags.append("blocker")
+        if s["mentions_decision"]: flags.append("decision")
+        if s["mentions_ship"]: flags.append("shipping")
+        lines.append(f"- topics={topics}; flags={','.join(flags) if flags else 'none'}; size={s['len']}")
+    return "\n".join(lines)
+
+
+def extract_signals(text: str) -> Dict[str, object]:
+    t = (text or "").lower()
+    topics = []
+    for topic, kws in PROJECT_KEYWORDS.items():
+        if any(k in t for k in kws):
+            topics.append(topic)
+
+    signal = {
+        "topics": topics[:3],
+        "is_question": "?" in t,
+        "mentions_blocker": any(k in t for k in ["blocked", "stuck", "can't", "error", "failing", "issue"]),
+        "mentions_decision": any(k in t for k in ["decide", "decision", "choose", "should we", "approve"]),
+        "mentions_ship": any(k in t for k in ["ship", "deploy", "release", "launch"]),
+        "len": len(t),
+    }
+    return signal
+
+def record_event(body: dict):
+    event = body.get("event") or {}
+
+    # ignore bot messages + edits/etc
+    if event.get("bot_id") or event.get("subtype"):
+        return
+
+    text = (event.get("text") or "").strip()
+    if not text:
+        return
+
+    ts = float(event.get("ts") or time.time())
+    signal = extract_signals(text)
+
+    # DO NOT store channel name or user id for Option A.
+    EVENT_BUFFER.append({
+        "ts": ts,
+        "signal": signal,
+    })
+
 
 # ----------------------------
 # Pinned-manifest cache helpers
@@ -171,30 +248,19 @@ def run_llm(role: str, channel_manifest: str, user_text: str) -> str:
 #---- Slack Event Handlers ---
 # Handle app mentions
 @app.event("app_mention")
-def handle_app_mention(event, say):
-    print("HIT app_mention", event.get("channel"), event.get("text"))
+def handle_app_mention(body, event, say, logger):
+    # record signals too (mentions count)
+    record_event(body)
 
     channel_id = event["channel"]
-
-    history = fetch_recent_messages(channel_id, limit=20)
-    say(f"DEBUG (last 20 human msgs):\n{history}")
-    return
-    # ignore bot messages
-    if event.get("bot_id"):
-        return
-
-    text = event.get("text", "") or ""
-
-    # Only respond if slack actually included a mention token for the bot
-    bot_user_id = app.client.auth_test()["user_id"]
-    if f"<@{bot_user_id}>" not in text:
+    text = (event.get("text") or "").strip()
+    if not text:
         return
 
     channel_name = get_channel_name(channel_id)
     role = ROLE_MAP.get(channel_name, "Unknown")
     channel_manifest = get_channel_manifest(channel_id)
 
-    # Slack mentions include "<@BOTID>" in text; keep it simple for now:
     answer = run_llm(role, channel_manifest, text)
     if answer:
         say(answer)
@@ -203,21 +269,53 @@ def handle_app_mention(event, say):
 # Optional: if you want the bot to reply to any message (not just mentions),
 # uncomment this and decide how you want to scope it.
 @app.event("message")
-def handle_message_events(event, say):
-    if event.get("bot_id"):
+def handle_message_events(body, event, say, logger):
+    record_event(body)
+
+    channel_id = event.get("channel")
+    text = (event.get("text") or "").strip()
+    if not channel_id or not text:
         return
 
-    text = (event.get("text") or "").strip()
+    # Ignore bot messages + message subtypes (edits, joins, etc.)
+    if event.get("bot_id") or event.get("subtype"):
+        return
 
-    # Only respond if Slack actually included a mention token for THIS bot
-    # if f"<@{BOT_USER_ID}>" not in text:
-    #     return
-
-    channel_id = event["channel"]
     channel_name = get_channel_name(channel_id)
+    is_role_channel = channel_name in ROLE_MAP
+    channel_type = event.get("channel_type")  # channel/group/im/mpim
+    is_dm = channel_type == "im"
+
+    # Outside role channels: only respond if DM or explicitly mentioned
+    if not is_role_channel and not is_dm:
+        if f"<@{BOT_USER_ID}>" not in text:
+            return
+
+    # Cross-channel awareness brief (Option A compliant)
+    if text.lower() in ["brief me", "what changed today", "daily brief"]:
+        since = LAST_BRIEF_TS_BY_CHANNEL.get(channel_id, 0.0)
+        signals = build_signal_summary(since_ts=since)
+        LAST_BRIEF_TS_BY_CHANNEL[channel_id] = time.time()
+
+        role = ROLE_MAP.get(channel_name, "Unknown")
+        channel_manifest = get_channel_manifest(channel_id)
+
+        prompt = (
+            f"{AWARENESS_RULE}\n\n"
+            f"WORKSPACE SIGNALS (ABSTRACTED):\n{signals}\n\n"
+            f"Return:\n"
+            f"1) 3-7 key signals\n"
+            f"2) 1-3 recommended next actions for this role\n"
+            f"3) 0-2 risks/watchouts\n"
+        )
+        answer = run_llm(role, channel_manifest, prompt)
+        if answer:
+            say(answer)
+        return
+
+    # Normal role response
     role = ROLE_MAP.get(channel_name, "Unknown")
     channel_manifest = get_channel_manifest(channel_id)
-
     answer = run_llm(role, channel_manifest, text)
     if answer:
         say(answer)
