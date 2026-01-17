@@ -33,7 +33,6 @@ oai = OpenAI(api_key=key)
 # -- Slack App --
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
-#
 BOT_USER_ID = app.client.auth_test()["user_id"]
 
 # -- Role mapping to Slack channels ---
@@ -47,6 +46,7 @@ ROLE_MAP = {
     "bot-sandbox": "Chief Risk Officer",  # for testing purposes
 }
 
+# --- GitHub repos to track ---
 TRACKED_REPOS = [
     "gaddys10/boxweb-site",
     "gaddys10/appointment-booker",
@@ -148,8 +148,9 @@ def poll_github():
                         role,
                         manifest,
                         f"A code change just happened:\n{event_text}\n\n"
-                        "If you believe Syrus needs to know about this right now, say so briefly. "
-                        "If not, respond with nothing."
+                        "If you believe the founder (Syrus) needs to know anything about this change or items/events/circumstances associated with it, say so briefly. "
+                        "if you believe that this code has made a significant impact to your role/responsibilities or progress concerning them, say so briefly. "
+                        "If you don't believe either of these two things, respond with nothing."
                     )
 
                     if resp and resp.strip():
@@ -341,13 +342,11 @@ def record_event(body: dict):
         "signal": signal,
     })
 
-
 # ----------------------------
 # Pinned-manifest cache helpers
 # ----------------------------
 
-# Simple in-memory cache with TTL
-# TTL means we re-fetch pinned messages every N seconds
+# Simple in-memory cache with TTL (refetching pins every N seconds).
 _manifest_cache: Dict[str, Tuple[float, str]] = {}
 MANIFEST_TTL_SECONDS = 300  # 5 minutes
 
@@ -424,9 +423,8 @@ def get_channel_manifest(channel_id: str) -> str:
 
 # --- Helper function to retrieve channel names ---
 def get_channel_name(channel_id: str) -> str:
-    """Best-effort channel name lookup."""
     try:
-        # Use conversations.info to fetch channel information
+        # Use conversations_info to fetch channel information
         info = app.client.conversations_info(channel=channel_id)
         return info["channel"]["name"]
     except Exception:
@@ -456,6 +454,7 @@ def run_llm(role: str, channel_manifest: str, user_text: str) -> str:
     return (resp.choices[0].message.content or "").strip()
 
 #---- Slack Event Handlers ---
+
 # Handle app mentions
 @app.event("app_mention")
 def handle_app_mention(body, event, say, logger):
@@ -476,8 +475,7 @@ def handle_app_mention(body, event, say, logger):
         say(answer)
 
 
-# Optional: if you want the bot to reply to any message (not just mentions),
-# uncomment this and decide how you want to scope it.
+# So the bot replies to any message (not just mentions),
 @app.event("message")
 def handle_message_events(body, event, say, logger):
 
@@ -500,7 +498,7 @@ def handle_message_events(body, event, say, logger):
         if f"<@{BOT_USER_ID}>" not in text:
             return
 
-    # Cross-channel awareness brief (Option A compliant)
+    # Cross-channel awareness brief
     if text.lower() in ["brief me", "what changed today", "daily brief"]:
         since = LAST_BRIEF_TS_BY_CHANNEL.get(channel_id, 0.0)
         signals = build_signal_summary(since_ts=since)
@@ -549,7 +547,6 @@ def handle_message_events(body, event, say, logger):
         say(answer)
 
 # --- Start the app ---
-
 if __name__ == "__main__":
     run_scheduled_jobs()
     SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
