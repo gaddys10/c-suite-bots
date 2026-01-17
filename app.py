@@ -47,6 +47,12 @@ ROLE_MAP = {
     "bot-sandbox": "Chief Risk Officer",  # for testing purposes
 }
 
+def build_channel_id_map():
+    resp = app.client.conversations_list(limit=1000)
+    chans = resp.get("channels", []) or []
+    return {c["name"]: c["id"] for c in chans}
+
+
 CHANNEL_ID_BY_NAME = build_channel_id_map()
 GENERAL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("general")
 
@@ -356,10 +362,6 @@ def record_event(body: dict):
 _manifest_cache: Dict[str, Tuple[float, str]] = {}
 MANIFEST_TTL_SECONDS = 300  # 5 minutes
 
-def build_channel_id_map():
-    resp = app.client.conversations_list(limit=1000)
-    chans = resp.get("channels", []) or []
-    return {c["name"]: c["id"] for c in chans}
 
 
 CHANNEL_ID_BY_NAME = build_channel_id_map()
