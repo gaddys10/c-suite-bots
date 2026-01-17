@@ -96,7 +96,7 @@ PROJECT_KEYWORDS = {
     "Bookity": ["bookity", "booking", "appointment", "service", "business"],
     "Vovis": ["vovis", "resume", "job", "career", "ats"],
     "Consonant": ["consonant", "consonant software"],
-    "Gaddico": ["gaddico", "holding", "c-suite", "c suite", "council"],
+    "Gaddico": ["gaddico", "gaddy", "locklear", "gaddy locklear", "holding", "c-suite", "c suite", "council"],
 }
 
 AWARENESS_RULE = (
@@ -169,12 +169,6 @@ def poll_github():
                             channel=channel_id,
                             text=resp.strip()
                         )
-
-                # optional: keep the one-line generic update (or delete it)
-                # app.client.chat_postMessage(
-                #     channel="council-briefs",
-                #     text=f"*GitHub Update* — {repo} new commit `{sha[:7]}`"
-                # )
 
             last_pr = kv_get(f"gh:{repo}:pr", "")
             pr = latest_open_pr(repo)
