@@ -157,7 +157,7 @@ def poll_github():
 
                     if resp and resp.strip():
                         app.client.chat_postMessage(
-                            channel="general",
+                            channel=channel_id,
                             text=f"*{role}*\n{resp.strip()}"
                         )
 
@@ -195,7 +195,7 @@ def poll_github():
                         role,
                         manifest,
                         f"A code change just happened:\n{event_text}\n\n"
-                        "If you believe Syrus needs to know about this right now, say so briefly. "
+                        "If you believe Syrus needs to know anything related to the code change or items/events/circumstances associated with it, say so briefly."
                         "If not, respond with nothing."
                     )
 
