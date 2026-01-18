@@ -11,7 +11,7 @@ from typing import Dict, Tuple, List
 from collections import deque
 from apscheduler.schedulers.background import BackgroundScheduler
 from memory import init_db, kv_get, kv_set, write_signal, get_signals_since, get_last_brief_ts, set_last_brief_ts
-from github_read import latest_commit_sha, latest_open_pr
+from github_read import recent_open_prs, commit_summary, compare_commits, recent_commit_shas
 
 init_db()
 
@@ -105,6 +105,23 @@ AWARENESS_RULE = (
     "and do not identify authors. Only discuss abstract implications/signals and next actions."
 )
 
+def format_commit_event(repo: str, sha: str) -> str:
+    s = commit_summary(repo, sha)
+    files = s.get("files", []) or []
+    file_lines = ", ".join(
+        f"{f['filename']} (+{f['additions']}/-{f['deletions']})" for f in files[:8]
+    )
+    if len(files) > 8:
+        file_lines += f", +{len(files)-8} more"
+
+    stats = s.get("stats") or {}
+    return (
+        f"{repo} commit {sha[:7]} — {s.get('message','')}\n"
+        f"Author: {s.get('author')} @ {s.get('date')}\n"
+        f"Stats: +{stats.get('additions',0)}/-{stats.get('deletions',0)} across {len(files)} files\n"
+        f"Files: {file_lines}"
+    )
+
 def nudge_roles_about_github(event_text: str):
     parts = []
     for ch_name, r in ROLE_MAP.items():
@@ -134,9 +151,21 @@ def poll_github():
     for repo in TRACKED_REPOS:
         try:
             last_sha = kv_get(f"gh:{repo}:sha", "")
-            sha = latest_commit_sha(repo)
-            if sha and sha != last_sha:
-                event_text = f"{repo} new commit {sha[:7]}"
+            shas = recent_commit_shas(repo, limit=10)  # newest -> oldest
+
+            if not last_sha and shas:
+                kv_set(f"gh:{repo}:sha", shas[0])
+                shas = []
+
+            to_process = []
+            for s in shas:
+                if s == last_sha:
+                    break
+                to_process.append(s)
+
+            # 🔁 THIS LOOP REPLACES `if sha and sha != last_sha`
+            for sha in reversed(to_process):  # oldest -> newest
+                event_text = format_commit_event(repo, sha)
 
                 write_signal(
                     channel="system",
@@ -146,6 +175,9 @@ def poll_github():
                 )
 
                 for ch_name, role in ROLE_MAP.items():
+                    decision_key = f"ruled:commit:{repo}:{sha}:{role}"
+                    if kv_get(decision_key):
+                        continue
                     if role == "Council":
                         continue
 
@@ -161,31 +193,55 @@ def poll_github():
                         f"A code change just happened:\n{event_text}\n\n"
                         "If you believe the founder (Syrus) needs to know anything about this change or items/events/circumstances associated with it, say so briefly. "
                         "if you believe that this code has made a significant impact to your role/responsibilities or progress concerning them, say so briefly. "
-                        "If you don't believe either of these two things, respond with nothing."
+                        "If neither applies, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
                     )
 
                     if resp and resp.strip():
-                        app.client.chat_postMessage(
-                            channel=channel_id,
-                            text=resp.strip()
-                        )
+                        app.client.chat_postMessage(channel=channel_id, text=resp.strip())
 
-            last_pr = kv_get(f"gh:{repo}:pr", "")
-            pr = latest_open_pr(repo)
-            fp = f"{pr['number']}|{pr['updated_at']}" if pr else ""
+                    kv_set(decision_key, "1")
 
-            if fp and fp != last_pr:
-                event_text = f"{repo} PR #{pr['number']} updated — {pr['title']}"
+            # ✅ update last seen commit to newest
+            if shas:
+                kv_set(f"gh:{repo}:sha", shas[0])
 
-                write_signal(
-                    channel="system",
-                    role="Council",
-                    kind="github_event",
-                    text=event_text
+            last_pr_fp = kv_get(f"gh:{repo}:pr", "")
+
+            prs = recent_open_prs(repo, limit=10)  # newest -> oldest
+            fps = [f"{p['number']}|{p['updated_at']}" for p in prs if p.get("updated_at")]
+
+            # first-run PR guard (mirrors your commit guard behavior)
+            if not last_pr_fp and fps:
+                kv_set(f"gh:{repo}:pr", fps[0])
+                continue  # or remove this continue if you still want commit processing here
+
+            to_process = []
+            for fp in fps:
+                if fp == last_pr_fp:
+                    break
+                to_process.append(fp)
+
+            # oldest -> newest
+            for fp in reversed(to_process):
+                pr = next((p for p in prs if f"{p['number']}|{p['updated_at']}" == fp), None)
+                if not pr:
+                    continue
+
+                event_text = (
+                    f"{repo} PR #{pr['number']} updated — {pr['title']}\n"
+                    f"Updated: {pr['updated_at']}\n"
+                    f"URL: {pr['html_url']}\n"
+                    f"Body: {(pr['body'] or '')[:600]}"
                 )
+
+                write_signal(channel="system", role="Council", kind="github_event", text=event_text)
 
                 for ch_name, role in ROLE_MAP.items():
                     if role == "Council":
+                        continue
+
+                    decision_key = f"ruled:pr:{repo}:{fp}:{role}"
+                    if kv_get(decision_key):
                         continue
 
                     channel_id = CHANNEL_ID_BY_NAME.get(ch_name)
@@ -198,18 +254,20 @@ def poll_github():
                         role,
                         manifest,
                         f"A code change just happened:\n{event_text}\n\n"
-                        "If you believe Syrus needs to know anything related to the code change or items/events/circumstances associated with it, say so briefly."
-                        "If not, respond with nothing."
+                        "If you believe Syrus needs to know anything related to the code change or items/events/circumstances associated with it, say so briefly. "
+                        "If not, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
                     )
 
                     if resp and resp.strip():
-                        app.client.chat_postMessage(
-                            channel=channel_id,
-                            text=resp.strip()
-                        )
+                        app.client.chat_postMessage(channel=channel_id, text=resp.strip())
 
-            kv_set(f"gh:{repo}:pr", fp)
-            kv_set(f"gh:{repo}:sha", sha)
+                    kv_set(decision_key, "1")
+
+            # update last seen PR fp to newest
+            if fps:
+                kv_set(f"gh:{repo}:pr", fps[0])
+
+
         except Exception as e:
             write_signal(
                 channel="system",
@@ -518,7 +576,7 @@ def handle_message_events(body, event, say, logger):
                 "A new bulletin was posted in #general:\n\n"
                 f"{bulletin}\n\n"
                 "If you believe Syrus should hear from you about this, reply briefly. "
-                "If not, respond with nothing."
+                "If not, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
             )
 
             if resp and resp.strip():

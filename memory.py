@@ -32,7 +32,7 @@ def write_signal(channel, role, kind, text):
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO signals VALUES (?, ?, ?, ?, ?)",
-        (time.time(), channel, role, kind, text[:500])
+        (time.time(), channel, role, kind, text[:4000])
     )
     conn.commit()
     conn.close()
