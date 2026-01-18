@@ -105,6 +105,160 @@ AWARENESS_RULE = (
     "and do not identify authors. Only discuss abstract implications/signals and next actions."
 )
 
+def set_focus_from_text(text: str):
+    raw = (text or "").strip()
+    if not raw.lower().startswith("focus:"):
+        return False
+
+    focus_text = raw.split(":", 1)[1].strip()
+    if not focus_text:
+        return False
+
+    sig = extract_signals(focus_text)
+    topics = sig.get("topics") or []
+
+    kv_set("focus:text", focus_text)
+    kv_set("focus:topics", ",".join(topics))
+    kv_set("focus:set_at", str(time.time()))
+    return True
+
+def refresh_auto_focus():
+    now = time.time()
+    focus_text, topics = infer_focus_from_recent_activity(now)
+
+    if focus_text:
+        kv_set("focus:auto:text", focus_text)
+        kv_set("focus:auto:topics", ",".join(topics))
+        kv_set("focus:auto:set_at", str(now))
+
+def infer_focus_from_recent_activity(now_ts: float) -> tuple[str, list[str]]:
+    """
+    Infer focus from the last ~90 minutes of signals + workspace event buffer.
+    Returns (focus_text, focus_topics).
+    """
+    WINDOW = 90 * 60
+
+    # Use DB signals (persistent) as primary source
+    rows = get_signals_since(now_ts - WINDOW)
+
+    # Score topics
+    topic_score = {}
+    recent_todos = []
+    recent_blockers = 0
+
+    for _, _, role, kind, text in rows:
+        sig = extract_signals(text or "")
+        for t in sig.get("topics") or []:
+            topic_score[t] = topic_score.get(t, 0) + 1
+
+        if sig.get("mentions_ship"):
+            for t in sig.get("topics") or []:
+                topic_score[t] = topic_score.get(t, 0) + 2
+
+        if sig.get("mentions_decision"):
+            for t in sig.get("topics") or []:
+                topic_score[t] = topic_score.get(t, 0) + 2
+
+        if sig.get("mentions_blocker"):
+            recent_blockers += 1
+
+        if (text or "").strip().startswith("TODO:"):
+            recent_todos.append((text or "").strip()[5:].strip())
+
+    # Pick top topics
+    ranked = sorted(topic_score.items(), key=lambda x: x[1], reverse=True)
+    top_topics = [t for t, _ in ranked[:2]]
+
+    if not ranked and not recent_todos:
+        return ("", [])
+
+    # Create a human focus sentence
+    if recent_todos:
+        focus_text = f"Today’s focus appears to be: {recent_todos[-1][:140]}"
+    else:
+        focus_text = f"Today’s focus appears to be: {', '.join(top_topics)}"
+
+    if recent_blockers >= 2:
+        focus_text += " (watch: blockers showing up repeatedly)"
+
+    return (focus_text, top_topics)
+
+def drift_check():
+    # --- config ---
+    WINDOW_SECONDS = 30 * 60        # look at last 30 min
+    COOLDOWN_SECONDS = 45 * 60      # don’t nag more often than this
+    MIN_EVENTS = 6                  # need enough signals to judge
+
+    now = time.time()
+
+    # cooldown
+    last_nudge = float(kv_get("drift:last_nudge_ts", "0") or 0)
+    if now - last_nudge < COOLDOWN_SECONDS:
+        return
+
+    focus_text = kv_get("focus:auto:text", "").strip()
+    focus_topics = [t for t in (kv_get("focus:auto:topics", "") or "").split(",") if t]
+
+    if not focus_text:
+        return  # no inferred focus yet
+
+    # collect recent abstract signals (no channels, no authors, no quotes)
+    since = now - WINDOW_SECONDS
+    recent = [x for x in list(EVENT_BUFFER) if x["ts"] >= since]
+    if len(recent) < MIN_EVENTS:
+        return
+
+    # count topic overlap
+    total = 0
+    on_focus = 0
+    blockers = 0
+    decisions = 0
+
+    for x in recent:
+        s = x["signal"]
+        total += 1
+        topics = s.get("topics") or []
+        if any(t in focus_topics for t in topics):
+            on_focus += 1
+        if s.get("mentions_blocker"):
+            blockers += 1
+        if s.get("mentions_decision"):
+            decisions += 1
+
+    ratio = on_focus / max(total, 1)
+
+    # drift rules (simple + effective)
+    drifted = (ratio < 0.35)  # <35% of signals match focus topics
+    urgent = (blockers >= 2) or (decisions >= 2)
+
+    if not drifted and not urgent:
+        return
+
+    # craft a role-style nudge from Chief of Staff (no quotes / no channel names)
+    cos_channel_id = CHANNEL_ID_BY_NAME.get("chief-of-staff")
+    if not cos_channel_id:
+        return
+
+    manifest = get_channel_manifest(cos_channel_id)
+
+    signals_blob = build_signal_summary(since_ts=since)
+
+    prompt = (
+        f"{AWARENESS_RULE}\n\n"
+        f"Founder focus:\n- {focus_text}\n\n"
+        f"Last 30 minutes of WORKSPACE SIGNALS (ABSTRACTED):\n{signals_blob}\n\n"
+        f"Your job: interrupt drift.\n"
+        f"Write ONE short message to Syrus:\n"
+        f"- If drifted: call it out and give 1 concrete redirect step.\n"
+        f"- If blockers/decisions: ask 1 sharp question to unblock.\n"
+        f"- Be direct, human, not robotic. No acknowledgements.\n"
+    )
+
+    msg = run_llm("Chief of Staff", manifest, prompt)
+    if msg and msg.strip():
+        app.client.chat_postMessage(channel=cos_channel_id, text=msg.strip())
+        kv_set("drift:last_nudge_ts", str(now))
+
 def format_commit_event(repo: str, sha: str) -> str:
     s = commit_summary(repo, sha)
     files = s.get("files", []) or []
@@ -213,8 +367,7 @@ def poll_github():
             # first-run PR guard (mirrors your commit guard behavior)
             if not last_pr_fp and fps:
                 kv_set(f"gh:{repo}:pr", fps[0])
-                continue  # or remove this continue if you still want commit processing here
-
+                fps = []
             to_process = []
             for fp in fps:
                 if fp == last_pr_fp:
@@ -335,6 +488,22 @@ def run_scheduled_jobs():
         trigger="interval",
         minutes=5,
         id="poll_github",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        refresh_auto_focus,
+        trigger="interval",
+        minutes=10,
+        id="refresh_auto_focus",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        drift_check,
+        trigger="interval",
+        minutes=15,
+        id="drift_check",
         replace_existing=True,
     )
 
@@ -540,10 +709,16 @@ def handle_message_events(body, event, say, logger):
     text = (event.get("text") or "").strip()
     if not channel_id or not text:
         return
+    
+    if set_focus_from_text(text):
+        say("Locked. I’ll nudge you if your activity drifts off this focus.")
+        return
 
     # Ignore bot messages + message subtypes (edits, joins, etc.)
     if event.get("bot_id") or event.get("subtype"):
         return
+
+    record_event(body)
     
     # CASE 1: message posted in #general (bulletin board)
     if GENERAL_CHANNEL_ID and channel_id == GENERAL_CHANNEL_ID:
