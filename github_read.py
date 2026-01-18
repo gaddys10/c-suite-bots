@@ -22,6 +22,24 @@ def latest_open_pr(repo_full_name: str):
         "html_url": pr.html_url,
     }
 
+def recent_open_prs(repo_full_name: str, limit: int = 10) -> list[dict]:
+    repo = gh.get_repo(repo_full_name)
+    prs = repo.get_pulls(state="open", sort="updated", direction="desc")
+
+    out = []
+    for i, pr in enumerate(prs):
+        if i >= limit:
+            break
+        out.append({
+            "number": pr.number,
+            "title": pr.title,
+            "body": (pr.body or "")[:2000],
+            "user": pr.user.login if pr.user else None,
+            "updated_at": pr.updated_at.isoformat() if pr.updated_at else None,
+            "html_url": pr.html_url,
+        })
+    return out
+
 def recent_commit_shas(full_name: str, limit: int = 10) -> list[str]:
     r = gh.get_repo(full_name)
     commits = r.get_commits()

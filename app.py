@@ -11,7 +11,7 @@ from typing import Dict, Tuple, List
 from collections import deque
 from apscheduler.schedulers.background import BackgroundScheduler
 from memory import init_db, kv_get, kv_set, write_signal, get_signals_since, get_last_brief_ts, set_last_brief_ts
-from github_read import latest_open_pr, commit_summary, compare_commits, recent_commit_shas
+from github_read import recent_open_prs, commit_summary, compare_commits, recent_commit_shas
 
 init_db()
 
@@ -205,11 +205,28 @@ def poll_github():
             if shas:
                 kv_set(f"gh:{repo}:sha", shas[0])
 
-            last_pr = kv_get(f"gh:{repo}:pr", "")
-            pr = latest_open_pr(repo)
-            fp = f"{pr['number']}|{pr['updated_at']}" if pr else ""
+            last_pr_fp = kv_get(f"gh:{repo}:pr", "")
 
-            if fp and fp != last_pr:
+            prs = recent_open_prs(repo, limit=10)  # newest -> oldest
+            fps = [f"{p['number']}|{p['updated_at']}" for p in prs if p.get("updated_at")]
+
+            # first-run PR guard (mirrors your commit guard behavior)
+            if not last_pr_fp and fps:
+                kv_set(f"gh:{repo}:pr", fps[0])
+                continue  # or remove this continue if you still want commit processing here
+
+            to_process = []
+            for fp in fps:
+                if fp == last_pr_fp:
+                    break
+                to_process.append(fp)
+
+            # oldest -> newest
+            for fp in reversed(to_process):
+                pr = next((p for p in prs if f"{p['number']}|{p['updated_at']}" == fp), None)
+                if not pr:
+                    continue
+
                 event_text = (
                     f"{repo} PR #{pr['number']} updated — {pr['title']}\n"
                     f"Updated: {pr['updated_at']}\n"
@@ -217,15 +234,14 @@ def poll_github():
                     f"Body: {(pr['body'] or '')[:600]}"
                 )
 
-                write_signal(
-                    channel="system",
-                    role="Council",
-                    kind="github_event",
-                    text=event_text
-                )
+                write_signal(channel="system", role="Council", kind="github_event", text=event_text)
 
                 for ch_name, role in ROLE_MAP.items():
                     if role == "Council":
+                        continue
+
+                    decision_key = f"ruled:pr:{repo}:{fp}:{role}"
+                    if kv_get(decision_key):
                         continue
 
                     channel_id = CHANNEL_ID_BY_NAME.get(ch_name)
@@ -233,28 +249,24 @@ def poll_github():
                         continue
 
                     manifest = get_channel_manifest(channel_id)
-                    decision_key = f"ruled:pr:{repo}:{fp}:{role}"
-                    if kv_get(decision_key):
-                        continue  # already ruled on this PR for this role
 
                     resp = run_llm(
                         role,
                         manifest,
                         f"A code change just happened:\n{event_text}\n\n"
-                        "If you believe Syrus needs to know anything related to the code change or items/events/circumstances associated with it, say so briefly."
+                        "If you believe Syrus needs to know anything related to the code change or items/events/circumstances associated with it, say so briefly. "
                         "If not, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
                     )
 
                     if resp and resp.strip():
-                        app.client.chat_postMessage(
-                            channel=channel_id,
-                            text=resp.strip()
-                        )
+                        app.client.chat_postMessage(channel=channel_id, text=resp.strip())
 
                     kv_set(decision_key, "1")
 
+            # update last seen PR fp to newest
+            if fps:
+                kv_set(f"gh:{repo}:pr", fps[0])
 
-            kv_set(f"gh:{repo}:pr", fp)
 
         except Exception as e:
             write_signal(
