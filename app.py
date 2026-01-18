@@ -454,19 +454,19 @@ def run_daily_brief():
         manifest = get_channel_manifest(role_channel_id)
 
         prompt = f"""
-You are preparing a PRIORITY BRIEF for the founder.
+This is the WEEKDAY MORNING STANDUP (async).
 
-Based ONLY on the activity below, produce:
-1) ONE top priority Syrus must address next
-2) Why this priority matters now (1 sentence)
-3) ONE risk or blocker that could slow it down
-4) ONE concrete next action Syrus should take today
+Based ONLY on the activity below, return:
+1) Today’s top priorities (one line)
+2) What changed since the last standup (one line)
+3) Biggest blockers / risks (one line)
+4) One refactor / cleanup suggestion (optional, one line)
+5) Suggested goals to accomplish today (one line)
 
 Rules:
 - Be decisive, not exhaustive
-- Do NOT summarize activity
-- Do NOT list multiple options
-- If nothing rises to this level, output EMPTY STRING
+- No summaries, no multiple options
+- If there’s nothing meaningful for your role, output EMPTY STRING
 
 ACTIVITY:
 {summary_input}
@@ -475,6 +475,9 @@ ACTIVITY:
         response = run_llm(role, manifest, prompt)
         if response:
             briefs.append(f"*{role}*\n{response}")
+    
+    if not briefs:
+        return
 
     final_brief = "\n\n".join(briefs)
 
@@ -486,7 +489,7 @@ ACTIVITY:
     set_last_brief_ts(time.time())
 
 def run_scheduled_jobs():
-    scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler = BackgroundScheduler(timezone="America/New_York")
 
     # poll GitHub every 5 minutes
     scheduler.add_job(
@@ -517,10 +520,10 @@ def run_scheduled_jobs():
     scheduler.add_job(
         run_daily_brief,
         trigger="cron",
-        day_of_week="mon,wed,fri",
-        hour=13,  # 9am ET = 13 UTC
+        day_of_week="mon-fri",
+        hour=9,  # 9am
         minute=0,
-        id="daily_brief",
+        id="weekday_standup",
         replace_existing=True,
     )
 
