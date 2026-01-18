@@ -454,13 +454,19 @@ def run_daily_brief():
         manifest = get_channel_manifest(role_channel_id)
 
         prompt = f"""
-You are preparing a daily executive brief.
+You are preparing a PRIORITY BRIEF for the founder.
 
-Based ONLY on the activity below:
-- What matters for your role today?
-- What decisions are required?
-- What risks should be flagged?
-- What actions should Syrus consider?
+Based ONLY on the activity below, produce:
+1) ONE top priority Syrus must address next
+2) Why this priority matters now (1 sentence)
+3) ONE risk or blocker that could slow it down
+4) ONE concrete next action Syrus should take today
+
+Rules:
+- Be decisive, not exhaustive
+- Do NOT summarize activity
+- Do NOT list multiple options
+- If nothing rises to this level, output EMPTY STRING
 
 ACTIVITY:
 {summary_input}
@@ -474,7 +480,7 @@ ACTIVITY:
 
     app.client.chat_postMessage(
         channel="council-briefs",
-        text=f"*Daily Executive Brief*\n\n{final_brief}"
+        text=f"*Executive Priority Brief*\n\n{final_brief}"
     )
 
     set_last_brief_ts(time.time())
@@ -511,6 +517,7 @@ def run_scheduled_jobs():
     scheduler.add_job(
         run_daily_brief,
         trigger="cron",
+        day_of_week="mon,wed,fri",
         hour=13,  # 9am ET = 13 UTC
         minute=0,
         id="daily_brief",
