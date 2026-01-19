@@ -4,6 +4,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+load_dotenv()
 from datetime import datetime, timezone
 import time
 import sys
@@ -12,7 +13,12 @@ from collections import deque
 from apscheduler.schedulers.background import BackgroundScheduler
 from memory import init_db, kv_get, kv_set, write_signal, get_signals_since, get_last_brief_ts, set_last_brief_ts
 from github_read import recent_open_prs, commit_summary, compare_commits, recent_commit_shas
-from github import GithubException
+from github import Github
+from github import Auth
+import os
+
+gh = Github(auth=Auth.Token(os.environ["GITHUB_TOKEN"]))
+print("GITHUB auth user:", gh.get_user().login)
 
 init_db()
 
@@ -23,8 +29,6 @@ EVENT_BUFFER = deque(maxlen=EVENT_BUFFER_MAX)
 
 # Per-role-channel "last brief" timestamp so briefs are incremental
 LAST_BRIEF_TS_BY_CHANNEL: Dict[str, float] = {}
-
-load_dotenv()
 
 # -- OpenAI Client --
 key = os.getenv("OPENAI_API_KEY", "")
