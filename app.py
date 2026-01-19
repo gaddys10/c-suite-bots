@@ -12,6 +12,7 @@ from collections import deque
 from apscheduler.schedulers.background import BackgroundScheduler
 from memory import init_db, kv_get, kv_set, write_signal, get_signals_since, get_last_brief_ts, set_last_brief_ts
 from github_read import recent_open_prs, commit_summary, compare_commits, recent_commit_shas
+from github import GithubException
 
 init_db()
 
@@ -512,6 +513,14 @@ def run_scheduled_jobs():
         trigger="interval",
         minutes=5,
         id="poll_github",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        refresh_channel_cache,
+        trigger="interval",
+        minutes=10,
+        id="refresh_channel_cache",
         replace_existing=True,
     )
 
