@@ -1,4 +1,3 @@
-# github_read.py (replace entire file with this)
 import os
 from github import Github
 from github import GithubException
@@ -9,22 +8,19 @@ if not _token:
 
 gh = Github(_token, per_page=100)
 
-def _repo(full_name: str):
-    return gh.get_repo(full_name)
-
 def latest_commit_sha(full_name: str) -> str:
-    r = _repo(full_name)
+    r = gh.get_repo(full_name)
     try:
         commits = r.get_commits()
         first = commits[0] if commits.totalCount else None
         return first.sha if first else ""
     except GithubException as e:
-        if e.status == 409:
+        if e.status == 409:  # empty repo
             return ""
         raise
 
 def latest_open_pr(repo_full_name: str):
-    repo = _repo(repo_full_name)
+    repo = gh.get_repo(repo_full_name)
     prs = repo.get_pulls(state="open", sort="updated", direction="desc")
     pr = prs[0] if prs.totalCount else None
     if not pr:
@@ -39,7 +35,7 @@ def latest_open_pr(repo_full_name: str):
     }
 
 def recent_open_prs(repo_full_name: str, limit: int = 10) -> list[dict]:
-    repo = _repo(repo_full_name)
+    repo = gh.get_repo(repo_full_name)
     prs = repo.get_pulls(state="open", sort="updated", direction="desc")
     out = []
     for i, pr in enumerate(prs):
@@ -56,13 +52,14 @@ def recent_open_prs(repo_full_name: str, limit: int = 10) -> list[dict]:
     return out
 
 def recent_commit_shas(full_name: str, limit: int = 10) -> list[str]:
-    r = _repo(full_name)
+    r = gh.get_repo(full_name)
     try:
         commits = r.get_commits()
     except GithubException as e:
-        if e.status == 409:
+        if e.status == 409:  # empty repo
             return []
         raise
+
     out = []
     for i, c in enumerate(commits):
         if i >= limit:
@@ -71,8 +68,9 @@ def recent_commit_shas(full_name: str, limit: int = 10) -> list[str]:
     return out
 
 def commit_summary(repo_full_name: str, sha: str) -> dict:
-    repo = _repo(repo_full_name)
+    repo = gh.get_repo(repo_full_name)
     c = repo.get_commit(sha)
+
     files = []
     for f in (c.files or []):
         files.append({
@@ -106,7 +104,7 @@ def commit_summary(repo_full_name: str, sha: str) -> dict:
     }
 
 def compare_commits(repo_full_name: str, base_sha: str, head_sha: str) -> dict:
-    repo = _repo(repo_full_name)
+    repo = gh.get_repo(repo_full_name)
     comp = repo.compare(base_sha, head_sha)
 
     commits = []
@@ -127,8 +125,4 @@ def compare_commits(repo_full_name: str, base_sha: str, head_sha: str) -> dict:
             "changes": f.changes,
         })
 
-    return {
-        "total_commits": comp.total_commits,
-        "commits": commits,
-        "files": files,
-    }
+    return {"total_commits": comp.total_commits, "commits": commits, "files": files}

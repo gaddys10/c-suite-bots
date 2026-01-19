@@ -4,6 +4,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+load_dotenv()
 from datetime import datetime, timezone
 import time
 import sys
@@ -14,6 +15,11 @@ from memory import init_db, kv_get, kv_set, write_signal, get_signals_since, get
 from github_read import recent_open_prs, commit_summary, compare_commits, recent_commit_shas
 from github import GithubException
 from figma_read import upload_diffs_and_signal
+from github import Github
+from github import Auth
+
+gh = Github(auth=Auth.Token(os.environ["GITHUB_TOKEN"]))
+print("GITHUB auth user:", gh.get_user().login)
 
 init_db()
 
@@ -24,8 +30,6 @@ EVENT_BUFFER = deque(maxlen=EVENT_BUFFER_MAX)
 
 # Per-role-channel "last brief" timestamp so briefs are incremental
 LAST_BRIEF_TS_BY_CHANNEL: Dict[str, float] = {}
-
-load_dotenv()
 
 # -- OpenAI Client --
 key = os.getenv("OPENAI_API_KEY", "")
@@ -71,6 +75,12 @@ def build_channel_id_map():
 
 CHANNEL_ID_BY_NAME = build_channel_id_map()
 GENERAL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("general")
+
+def _is_effectively_empty(s: str) -> bool:
+    if not s:
+        return True
+    t = s.strip()
+    return (t == "") or (t.upper() == "EMPTY STRING")
 
 def refresh_channel_cache():
     global CHANNEL_ID_BY_NAME
@@ -332,13 +342,15 @@ def format_commit_event(repo: str, sha: str) -> str:
         f"Files: {file_lines}"
     )
 
+COUNCIL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("council")
+
 def nudge_roles_about_github(event_text: str):
     parts = []
     for ch_name, r in ROLE_MAP.items():
         if r == "Council":
             continue
         channel_id = CHANNEL_ID_BY_NAME.get(ch_name)
-        if not channel_id:
+        if not COUNCIL_CHANNEL_ID:
             continue
         manifest = get_channel_manifest(channel_id)
 
@@ -352,7 +364,7 @@ def nudge_roles_about_github(event_text: str):
             parts.append(f"*{r}*\n{resp}")
 
     app.client.chat_postMessage(
-        channel="council",
+        channel=COUNCIL_CHANNEL_ID,
         text="*GitHub Role Nudges*\n\n" + "\n\n".join(parts)
     )
 
@@ -406,7 +418,7 @@ def poll_github():
                         "If neither applies, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
                     )
 
-                    if resp and resp.strip():
+                    if resp and not _is_effectively_empty(resp):
                         app.client.chat_postMessage(channel=channel_id, text=resp.strip())
 
                     kv_set(decision_key, "1")
@@ -467,7 +479,7 @@ def poll_github():
                         "If not, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
                     )
 
-                    if resp and resp.strip():
+                    if resp and not _is_effectively_empty(resp):
                         app.client.chat_postMessage(channel=channel_id, text=resp.strip())
 
                     kv_set(decision_key, "1")
@@ -527,7 +539,7 @@ ACTIVITY:
 """.strip()
 
         response = run_llm(role, manifest, prompt)
-        if response and response.strip():
+        if response and not _is_effectively_empty(response):
             app.client.chat_postMessage(channel=role_channel_id, text=response.strip())
 
     set_last_brief_ts(time.time())
@@ -552,14 +564,6 @@ def run_scheduled_jobs():
         replace_existing=True,
     )
 
-
-    scheduler.add_job(
-        refresh_channel_cache,
-        trigger="interval",
-        minutes=10,
-        id="refresh_channel_cache",
-        replace_existing=True,
-    )
 
     scheduler.add_job(
         refresh_auto_focus,
@@ -825,7 +829,7 @@ def handle_message_events(body, event, say, logger):
                 "If not, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
             )
 
-            if resp and resp.strip():
+            if resp and not _is_effectively_empty(resp):
                 app.client.chat_postMessage(
                     channel=role_channel_id,
                     text=resp.strip()
