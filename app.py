@@ -44,17 +44,35 @@ ROLE_MAP = {
     "chief-strategy-officer": "Chief Strategy Officer",
     "chief-risk-officer": "Chief Risk Officer",
     "council": "Council",
-    "bot-sandbox": "Chief Risk Officer",  # for testing purposes
 }
 
 def build_channel_id_map():
-    resp = app.client.conversations_list(limit=1000)
-    chans = resp.get("channels", []) or []
-    return {c["name"]: c["id"] for c in chans}
+    out = {}
+    cursor = None
+
+    while True:
+        resp = app.client.conversations_list(
+            limit=200,
+            types="public_channel,private_channel",
+            cursor=cursor
+        )
+        for c in (resp.get("channels") or []):
+            out[c["name"]] = c["id"]
+
+        cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+        if not cursor:
+            break
+
+    return out
+
 
 
 CHANNEL_ID_BY_NAME = build_channel_id_map()
 GENERAL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("general")
+
+def refresh_channel_cache():
+    global CHANNEL_ID_BY_NAME
+    CHANNEL_ID_BY_NAME = build_channel_id_map()
 
 # --- GitHub repos to track ---
 TRACKED_REPOS = [
@@ -104,6 +122,15 @@ AWARENESS_RULE = (
     "Do not quote or reveal message text from other channels, do not identify channel names, "
     "and do not identify authors. Only discuss abstract implications/signals and next actions."
 )
+
+FOUNDER_USER_ID = os.getenv("FOUNDER_USER_ID", "").strip()
+
+def dm_founder(text: str):
+    if not FOUNDER_USER_ID:
+        return
+    resp = app.client.conversations_open(users=FOUNDER_USER_ID)
+    dm_channel_id = resp["channel"]["id"]
+    app.client.chat_postMessage(channel=dm_channel_id, text=text)
 
 def set_focus_from_text(text: str):
     raw = (text or "").strip()
@@ -256,7 +283,7 @@ def drift_check():
 
     msg = run_llm("Chief of Staff", manifest, prompt)
     if msg and msg.strip():
-        app.client.chat_postMessage(channel=cos_channel_id, text=msg.strip())
+        dm_founder(msg.strip())
         kv_set("drift:last_nudge_ts", str(now))
 
 def format_commit_event(repo: str, sha: str) -> str:
@@ -442,15 +469,14 @@ def run_daily_brief():
             for _, _, role, kind, text in rows
         )
 
-    briefs = []
-
     for channel_name, role in ROLE_MAP.items():
         if role == "Council":
-            continue  # skip council, it's an aggregator
+            continue
 
         role_channel_id = CHANNEL_ID_BY_NAME.get(channel_name)
         if not role_channel_id:
             continue
+
         manifest = get_channel_manifest(role_channel_id)
 
         prompt = f"""
@@ -465,7 +491,6 @@ Based ONLY on the activity below, return:
 
 Rules:
 - Be decisive, not exhaustive
-- No summaries, no multiple options
 - If there’s nothing meaningful for your role, output EMPTY STRING
 
 ACTIVITY:
@@ -473,18 +498,8 @@ ACTIVITY:
 """.strip()
 
         response = run_llm(role, manifest, prompt)
-        if response:
-            briefs.append(f"*{role}*\n{response}")
-    
-    if not briefs:
-        return
-
-    final_brief = "\n\n".join(briefs)
-
-    app.client.chat_postMessage(
-        channel="council-briefs",
-        text=f"*Executive Priority Brief*\n\n{final_brief}"
-    )
+        if response and response.strip():
+            app.client.chat_postMessage(channel=role_channel_id, text=response.strip())
 
     set_last_brief_ts(time.time())
 
@@ -497,6 +512,14 @@ def run_scheduled_jobs():
         trigger="interval",
         minutes=5,
         id="poll_github",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        refresh_channel_cache,
+        trigger="interval",
+        minutes=10,
+        id="refresh_channel_cache",
         replace_existing=True,
     )
 
