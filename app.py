@@ -310,13 +310,15 @@ def format_commit_event(repo: str, sha: str) -> str:
         f"Files: {file_lines}"
     )
 
+COUNCIL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("council")
+
 def nudge_roles_about_github(event_text: str):
     parts = []
     for ch_name, r in ROLE_MAP.items():
         if r == "Council":
             continue
         channel_id = CHANNEL_ID_BY_NAME.get(ch_name)
-        if not channel_id:
+        if not COUNCIL_CHANNEL_ID:
             continue
         manifest = get_channel_manifest(channel_id)
 
@@ -330,7 +332,7 @@ def nudge_roles_about_github(event_text: str):
             parts.append(f"*{r}*\n{resp}")
 
     app.client.chat_postMessage(
-        channel="council",
+        channel=COUNCIL_CHANNEL_ID,
         text="*GitHub Role Nudges*\n\n" + "\n\n".join(parts)
     )
 
