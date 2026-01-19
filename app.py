@@ -505,7 +505,7 @@ ACTIVITY:
 """.strip()
 
         response = run_llm(role, manifest, prompt)
-        if response and _is_effectively_empty(response):
+        if response and not _is_effectively_empty(response):
             app.client.chat_postMessage(channel=role_channel_id, text=response.strip())
 
     set_last_brief_ts(time.time())
@@ -519,14 +519,6 @@ def run_scheduled_jobs():
         trigger="interval",
         minutes=5,
         id="poll_github",
-        replace_existing=True,
-    )
-
-    scheduler.add_job(
-        refresh_channel_cache,
-        trigger="interval",
-        minutes=10,
-        id="refresh_channel_cache",
         replace_existing=True,
     )
 
