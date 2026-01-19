@@ -519,11 +519,11 @@ ACTIVITY:
 def run_scheduled_jobs():
     scheduler = BackgroundScheduler(timezone="America/New_York")
 
-    # poll GitHub every 5 minutes
+    # poll GitHub every minute
     scheduler.add_job(
         poll_github,
         trigger="interval",
-        minutes=5,
+        minutes=1,
         id="poll_github",
         replace_existing=True,
     )
