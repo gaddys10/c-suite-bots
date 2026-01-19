@@ -524,6 +524,14 @@ def run_scheduled_jobs():
     )
 
     scheduler.add_job(
+        refresh_channel_cache,
+        trigger="interval",
+        minutes=10,
+        id="refresh_channel_cache",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
         refresh_auto_focus,
         trigger="interval",
         minutes=10,
