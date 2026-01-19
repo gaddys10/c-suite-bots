@@ -13,6 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from memory import init_db, kv_get, kv_set, write_signal, get_signals_since, get_last_brief_ts, set_last_brief_ts
 from github_read import recent_open_prs, commit_summary, compare_commits, recent_commit_shas
 from github import GithubException
+from figma_read import upload_diffs_and_signal
 
 init_db()
 
@@ -158,6 +159,33 @@ def refresh_auto_focus():
         kv_set("focus:auto:text", focus_text)
         kv_set("focus:auto:topics", ",".join(topics))
         kv_set("focus:auto:set_at", str(now))
+
+def poll_figma():
+    file_key = (os.getenv("FIGMA_FILE_KEY") or "").strip()
+    diffs_channel_name = (os.getenv("FIGMA_DIFFS_CHANNEL") or "figma-diffs").strip()
+
+    if not file_key:
+        return
+
+    diffs_channel_id = CHANNEL_ID_BY_NAME.get(diffs_channel_name)
+    if not diffs_channel_id:
+        # channel map may be stale; refresh and try again
+        refresh_channel_cache()
+        diffs_channel_id = CHANNEL_ID_BY_NAME.get(diffs_channel_name)
+        if not diffs_channel_id:
+            write_signal("system", "Council", "figma_error", f"Missing diffs channel: {diffs_channel_name}")
+            return
+
+    pct_threshold = float(os.getenv("FIGMA_PCT_THRESHOLD") or "0.25")
+    top_k = int(os.getenv("FIGMA_TOP_K") or "8")
+
+    upload_diffs_and_signal(
+        slack_client=app.client,
+        diffs_channel_id=diffs_channel_id,
+        file_key=file_key,
+        pct_threshold=pct_threshold,
+        top_k=top_k,
+    )
 
 def infer_focus_from_recent_activity(now_ts: float) -> tuple[str, list[str]]:
     """
@@ -507,22 +535,23 @@ ACTIVITY:
 def run_scheduled_jobs():
     scheduler = BackgroundScheduler(timezone="America/New_York")
 
-    # poll GitHub every 5 minutes
+    # poll GitHub every minute
     scheduler.add_job(
         poll_github,
         trigger="interval",
-        minutes=5,
+        minutes=1,
         id="poll_github",
         replace_existing=True,
     )
 
     scheduler.add_job(
-        refresh_channel_cache,
+        poll_figma,
         trigger="interval",
         minutes=10,
-        id="refresh_channel_cache",
+        id="poll_figma",
         replace_existing=True,
     )
+
 
     scheduler.add_job(
         refresh_channel_cache,
