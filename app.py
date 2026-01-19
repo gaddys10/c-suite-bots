@@ -71,6 +71,12 @@ def build_channel_id_map():
 CHANNEL_ID_BY_NAME = build_channel_id_map()
 GENERAL_CHANNEL_ID = CHANNEL_ID_BY_NAME.get("general")
 
+def _is_effectively_empty(s: str) -> bool:
+    if not s:
+        return True
+    t = s.strip()
+    return (t == "") or (t.upper() == "EMPTY STRING")
+
 def refresh_channel_cache():
     global CHANNEL_ID_BY_NAME
     CHANNEL_ID_BY_NAME = build_channel_id_map()
@@ -378,7 +384,7 @@ def poll_github():
                         "If neither applies, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
                     )
 
-                    if resp and resp.strip():
+                    if resp and not _is_effectively_empty(resp):
                         app.client.chat_postMessage(channel=channel_id, text=resp.strip())
 
                     kv_set(decision_key, "1")
@@ -439,7 +445,7 @@ def poll_github():
                         "If not, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
                     )
 
-                    if resp and resp.strip():
+                    if resp and not _is_effectively_empty(resp):
                         app.client.chat_postMessage(channel=channel_id, text=resp.strip())
 
                     kv_set(decision_key, "1")
@@ -499,7 +505,7 @@ ACTIVITY:
 """.strip()
 
         response = run_llm(role, manifest, prompt)
-        if response and response.strip():
+        if response and _is_effectively_empty(response):
             app.client.chat_postMessage(channel=role_channel_id, text=response.strip())
 
     set_last_brief_ts(time.time())
@@ -796,7 +802,7 @@ def handle_message_events(body, event, say, logger):
                 "If not, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
             )
 
-            if resp and resp.strip():
+            if resp and not _is_effectively_empty(resp):
                 app.client.chat_postMessage(
                     channel=role_channel_id,
                     text=resp.strip()
