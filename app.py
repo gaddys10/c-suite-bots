@@ -12,6 +12,7 @@ from collections import deque
 from apscheduler.schedulers.background import BackgroundScheduler
 from memory import init_db, kv_get, kv_set, write_signal, get_signals_since, get_last_brief_ts, set_last_brief_ts
 from github_read import recent_open_prs, commit_summary, compare_commits, recent_commit_shas
+from github import GithubException
 
 init_db()
 
