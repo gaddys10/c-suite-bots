@@ -412,10 +412,12 @@ def poll_github():
                     resp = run_llm(
                         role,
                         manifest,
-                        f"A code change just happened:\n{event_text}\n\n"
-                        "If you believe the founder (Syrus) needs to know anything about this change or items/events/circumstances associated with it, say so briefly. "
-                        "if you believe that this code has made a significant impact to your role/responsibilities or progress concerning them, say so briefly. "
-                        "If neither applies, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
+                        f"You just noticed this GitHub change:\n{event_text}\n\n"
+                        "Write a short Slack message to Syrus (1–3 sentences):\n"
+                        "- what changed (plain English)\n"
+                        "- what you want him to do next (one step) and why\n"
+                        "- one risk only if real\n"
+                        "If nothing matters for your role, output EMPTY STRING."
                     )
 
                     if resp and not _is_effectively_empty(resp):
@@ -521,18 +523,15 @@ def run_daily_brief():
         manifest = get_channel_manifest(role_channel_id)
 
         prompt = f"""
-This is the WEEKDAY MORNING STANDUP (async).
+Weekday standup. Talk directly to Syrus.
 
-Based ONLY on the activity below, return:
-1) Today’s top priorities (one line)
-2) What changed since the last standup (one line)
-3) Biggest blockers / risks (one line)
-4) One refactor / cleanup suggestion (optional, one line)
-5) Suggested goals to accomplish today (one line)
+In 3–6 short lines:
+- What happened yesterday (1 line)
+- What should be done today (1 line)
+- Are there blockers / risks (0–1 line)
+- One suggestion (optional, 1 line)
 
-Rules:
-- Be decisive, not exhaustive
-- If there’s nothing meaningful for your role, output EMPTY STRING
+If nothing meaningful for your role, output EMPTY STRING.
 
 ACTIVITY:
 {summary_input}
@@ -823,10 +822,10 @@ def handle_message_events(body, event, say, logger):
             resp = run_llm(
                 role,
                 manifest,
-                "A new bulletin was posted in #general:\n\n"
+                "Here’s what Syrus posted as a bulletin:\n\n"
                 f"{bulletin}\n\n"
-                "If you believe Syrus should hear from you about this, reply briefly. "
-                "If not, output an EMPTY STRING. Do not acknowledge. Do not say ‘no action needed.’"
+                "Reply to Syrus like a human teammate. 1–3 sentences max. "
+                "If you have nothing useful, output EMPTY STRING."
             )
 
             if resp and not _is_effectively_empty(resp):
