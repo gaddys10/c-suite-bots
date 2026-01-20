@@ -413,10 +413,10 @@ def poll_github():
                         role,
                         manifest,
                         f"You just noticed this GitHub change:\n{event_text}\n\n"
-                        "Write a short Slack message to Syrus (the founder) (he/him) (1–3 sentences):\n"
-                        "- Tell Syrus what changed (plain English)\n"
-                        "- Tell Syrus what to do next (one step) and why\n"
-                        "- Tell Syrus about one risk only if its real\n"
+                        "Write a short Slack message directly to Syrus (the founder) (he/him/you) (1–3 sentences):\n"
+                        "- Tell him what changed (plain English)\n"
+                        "- Tell him what to do next (one step) and why\n"
+                        "- Tell him about one risk only if its real\n"
                         "If nothing matters for your role, output EMPTY STRING."
                     )
 
