@@ -417,6 +417,7 @@ def poll_github():
                         "- Tell him what changed (plain English)\n"
                         "- Tell him what to do next (one step) and why\n"
                         "- Tell him about one risk only if its real\n"
+                        "MANDATORY: In your message, include the change ID so Syrus can reference it (use the exact identifier from the first line, e.g. 'commit abc1234' or 'PR #123')."
                         "If nothing matters for your role, output EMPTY STRING."
                     )
 
