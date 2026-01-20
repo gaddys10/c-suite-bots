@@ -91,7 +91,7 @@ TRACKED_REPOS = [
     "gaddys10/boxweb-site",
     "gaddys10/appointment-booker",
     "gaddys10/jobari-engine",
-    "gaddys10/boxing-gym-finder",
+    # "gaddys10/boxing-gym-finder",
     "gaddys10/c-suite-bots",
     "gaddys10/home-site",
 ]
