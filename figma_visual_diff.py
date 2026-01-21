@@ -15,7 +15,7 @@ class FigmaVersion:
 
 class FigmaClient:
     def __init__(self, token: Optional[str] = None) -> None:
-        self.token = token or os.environ["FIGMA_TOKEN"]
+        self.token = (token or os.environ["FIGMA_TOKEN"]).strip()
         self.s = requests.Session()
         self.s.headers.update({"X-Figma-Token": self.token, "Accept": "application/json"})
 
