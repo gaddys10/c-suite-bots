@@ -544,6 +544,103 @@ ACTIVITY:
 
     set_last_brief_ts(time.time())
 
+def _brief_ts_get(key: str) -> float:
+    try:
+        return float(kv_get(key, "0") or 0)
+    except Exception:
+        return 0.0
+
+def _brief_ts_set(key: str, ts: float) -> None:
+    kv_set(key, str(ts))
+
+def run_after_lunch_checkin():
+    last_ts = _brief_ts_get("brief:after_lunch:last_ts")
+    rows = get_signals_since(last_ts)
+
+    if not rows:
+        summary_input = "No new activity since the last after-lunch check-in."
+    else:
+        summary_input = "\n".join(
+            f"- [{kind.upper()}] ({role}) {text}"
+            for _, _, role, kind, text in rows
+        )
+
+    for channel_name, role in ROLE_MAP.items():
+        if role == "Council":
+            continue
+
+        role_channel_id = CHANNEL_ID_BY_NAME.get(channel_name)
+        if not role_channel_id:
+            continue
+
+        manifest = get_channel_manifest(role_channel_id)
+
+        prompt = f"""
+After-lunch check-in (1pm). Talk directly to Syrus.
+
+In 3–6 short lines:
+- What’s the single most important win to secure before EOD (1 line)
+- Next 1–2 concrete actions (1–2 lines)
+- Any blockers / risks / missing info (0–1 line)
+- One “keep it tight” reminder (optional, 1 line)
+
+If nothing meaningful for your role, output EMPTY STRING.
+
+ACTIVITY:
+{summary_input}
+""".strip()
+
+        response = run_llm(role, manifest, prompt)
+        if response and not _is_effectively_empty(response):
+            app.client.chat_postMessage(channel=role_channel_id, text=response.strip())
+
+    _brief_ts_set("brief:after_lunch:last_ts", time.time())
+
+def run_end_of_day_review():
+    last_ts = _brief_ts_get("brief:eod:last_ts")
+    rows = get_signals_since(last_ts)
+
+    if not rows:
+        summary_input = "No new activity since the last end-of-day review."
+    else:
+        summary_input = "\n".join(
+            f"- [{kind.upper()}] ({role}) {text}"
+            for _, _, role, kind, text in rows
+        )
+
+    for channel_name, role in ROLE_MAP.items():
+        if role == "Council":
+            continue
+
+        role_channel_id = CHANNEL_ID_BY_NAME.get(channel_name)
+        if not role_channel_id:
+            continue
+
+        manifest = get_channel_manifest(role_channel_id)
+
+        prompt = f"""
+End-of-day review (5pm). Talk directly to Syrus.
+
+In 4–7 short lines:
+- What got done today (1–2 lines)
+- What didn’t get done + why (0–1 line)
+- Biggest risk / loose end to watch (0–1 line)
+- The *first* task to start tomorrow morning (1 line)
+- One improvement to make tomorrow smoother (optional, 1 line)
+
+If nothing meaningful for your role, output EMPTY STRING.
+
+ACTIVITY:
+{summary_input}
+""".strip()
+
+        response = run_llm(role, manifest, prompt)
+        if response and not _is_effectively_empty(response):
+            app.client.chat_postMessage(channel=role_channel_id, text=response.strip())
+
+    _brief_ts_set("brief:eod:last_ts", time.time())
+
+
 def run_scheduled_jobs():
     scheduler = BackgroundScheduler(timezone="America/New_York")
 
@@ -555,6 +652,27 @@ def run_scheduled_jobs():
         id="poll_github",
         replace_existing=True,
     )
+
+    scheduler.add_job(
+        run_after_lunch_checkin,
+        trigger="cron",
+        day_of_week="mon-fri",
+        hour=13,  # 1pm
+        minute=0,
+        id="after_lunch_checkin",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        run_end_of_day_review,
+        trigger="cron",
+        day_of_week="mon-fri",
+        hour=17,  # 5pm
+        minute=0,
+        id="end_of_day_review",
+        replace_existing=True,
+    )
+
 
     scheduler.add_job(
         poll_figma,
