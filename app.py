@@ -94,6 +94,7 @@ TRACKED_REPOS = [
     # "gaddys10/boxing-gym-finder",
     "gaddys10/c-suite-bots",
     "gaddys10/home-site",
+    "gaddys10/zelus",
 ]
 
 #--- System prompt template for each role ---
